@@ -142,6 +142,109 @@ Seeds can be version-controlled like models, making the pipeline deterministic f
   - Schema: `RAW` (for raw data)
   - Appropriate permissions to read from raw tables and write to target schemas
 
+## What is `profiles.yml`?
+
+The `profiles.yml` file is a dbt configuration file that contains credentials and connection information for Snowflake (or another data warehouse). This file is essential for dbt to connect to your database and execute transformations.
+
+### What is it used for?
+
+The `profiles.yml` is used for:
+
+1. **Authentication**: Stores the credentials needed to authenticate with Snowflake (username, password, or private key)
+2. **Connection configuration**: Defines connection parameters such as account, warehouse, database, schema, and role
+3. **Multiple environments**: Allows configuring different environments (dev, prod, staging) with different settings
+4. **Security**: Keeps credentials local and out of version control
+
+### Why is it not in Git?
+
+The `profiles.yml` file is listed in `.gitignore` and **should not be committed to Git** because it contains sensitive information:
+
+- Access credentials (passwords or private keys)
+- Authentication information that could compromise database security
+- Developer or environment-specific configurations
+
+Each developer or environment should have their own `profiles.yml` file with their specific credentials.
+
+### How to create `profiles.yml`?
+
+Since the file is not versioned, you need to create it manually the first time you clone the repository. Follow these steps:
+
+1. **Navigate to the project directory**:
+   ```bash
+   cd airbnb
+   ```
+
+2. **Create the `profiles.yml` file** in the `airbnb/` directory:
+   ```bash
+   touch profiles.yml
+   ```
+
+3. **Add the configuration** with your Snowflake credentials. Example structure:
+
+   **Option 1: Password authentication**
+   ```yaml
+   airbnb:
+     outputs:
+       dev:
+         type: snowflake
+         account: <your-account-id>
+         user: <your-username>
+         password: <your-password>
+         role: <your-role>
+         database: AIRBNB
+         schema: DEV
+         warehouse: <your-warehouse>
+         threads: 1
+     target: dev
+   ```
+
+   **Option 2: Private key authentication (recommended for production)**
+   ```yaml
+   airbnb:
+     outputs:
+       dev:
+         type: snowflake
+         account: <your-account-id>
+         user: <your-username>
+         role: <your-role>
+         private_key: "-----BEGIN ENCRYPTED PRIVATE KEY-----\n...\n-----END ENCRYPTED PRIVATE KEY-----\n"
+         private_key_passphrase: <your-passphrase>
+         database: AIRBNB
+         schema: DEV
+         warehouse: <your-warehouse>
+         threads: 1
+     target: dev
+   ```
+
+4. **Replace the values** between `< >` with your actual credentials:
+   - `<your-account-id>`: Your Snowflake account ID (e.g., `pfglogg-ga39636`)
+   - `<your-username>`: Username in Snowflake
+   - `<your-password>`: User password (if using password authentication)
+   - `<your-role>`: Snowflake role (e.g., `TRANSFORM`)
+   - `<your-warehouse>`: Warehouse name (e.g., `COMPUTE_WH`)
+   - `<your-passphrase>`: Passphrase to decrypt the private key (if using key authentication)
+
+5. **Verify the connection**:
+   ```bash
+   dbt debug
+   ```
+
+   This command tests the connection and reports any configuration issues.
+
+### File structure
+
+- **`airbnb`**: Profile name (must match the project name defined in `dbt_project.yml`)
+- **`outputs`**: Defines different output configurations (dev, prod, etc.)
+- **`dev`**: Environment name (can be `dev`, `prod`, `staging`, etc.)
+- **`target`**: Defines which environment to use by default
+
+### Security tips
+
+- **Never share** the contents of `profiles.yml` publicly
+- **Use environment variables** for sensitive values when possible (with `env_var()` in dbt)
+- **Use private key authentication** in production environments
+- **Keep the file** only on your local machine
+
 ## Setup
 
 1. **Install dbt** (if not already installed):
@@ -149,21 +252,9 @@ Seeds can be version-controlled like models, making the pipeline deterministic f
    pip install dbt-snowflake
    ```
 
-2. **Configure your Snowflake connection** in `airbnb/profiles.yml`:
-   ```yaml
-   airbnb:
-     outputs:
-       dev:
-         type: snowflake
-         account: <your-account>
-         user: <your-user>
-         password: <your-password>
-         role: <your-role>
-         database: AIRBNB
-         warehouse: <your-warehouse>
-         schema: <your-schema>
-     target: dev
-   ```
+2. **Configure your Snowflake connection** by creating the `airbnb/profiles.yml` file:
+   
+   Since `profiles.yml` is not versioned in Git (because it contains sensitive credentials), you need to create it manually. See the [What is `profiles.yml`?](#what-is-profilesyml) section above for detailed instructions on how to create and configure this file.
 
 3. **Verify your connection**:
    ```bash
