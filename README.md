@@ -471,7 +471,7 @@ Snapshots work by:
    - Identifies new records, changed records, and deleted records
    - Inserts new versions of changed records
    - Marks old versions as invalid (sets `dbt_valid_to`)
-   - Handles deletions based on the `hard_delete` configuration
+   - When a record is deleted from the source, marks it as invalidated by setting `dbt_valid_to` to the snapshot execution timestamp
 
 #### Snapshot Strategy: Timestamp
 
@@ -486,7 +486,6 @@ snapshots:
       unique_key: id
       updated_at: updated_at
       strategy: timestamp
-      hard_delete: invalidate
 ```
 
 **`scd_raw_hosts`** (in `airbnb/snapshots/raw_hosts_snapshot.yml`):
@@ -498,13 +497,14 @@ snapshots:
       unique_key: id
       updated_at: updated_at
       strategy: timestamp
-      hard_delete: invalidate
 ```
 
 Both configurations:
 - Use `id` as the unique identifier for each record
 - Detect changes by comparing the `updated_at` timestamp
 - When a record is deleted from the source, mark it as invalidated (set `dbt_valid_to`) rather than deleting it from the snapshot
+
+**Deletion Behavior**: When a record is deleted from the source table, dbt automatically detects the deletion on the next snapshot run. The most recent version of the record in the snapshot (the one with `dbt_valid_to = NULL`) will have its `dbt_valid_to` field set to the snapshot execution timestamp (`dbt_updated_at`). This preserves the complete history of the record, including when it was deleted, which is essential for audit trails and historical analysis.
 
 #### How to Use
 
@@ -550,12 +550,18 @@ dbt snapshot --select scd_raw_hosts
 - Create a new record showing the superhost status with the appropriate timestamps
 - Enable historical analysis of when hosts achieved superhost status
 
+**Deletion Example**: If a listing is deleted from the source table, on the next snapshot run:
+- The snapshot detects the record no longer exists in the source
+- The most recent snapshot record (with `dbt_valid_to = NULL`) is updated
+- `dbt_valid_to` is set to the snapshot execution timestamp
+- The record remains in the snapshot table, preserving the deletion event for audit purposes
+
 #### Best Practices
 
 - Run snapshots regularly (e.g., daily) to capture changes frequently
 - Use snapshots for critical source tables that change over time
 - Consider the storage implications of maintaining historical snapshots
-- Use `hard_delete: invalidate` to preserve deleted records for audit purposes
+- Deleted records are automatically preserved in snapshots (with `dbt_valid_to` set to the deletion timestamp) for audit purposes
 - Query snapshot tables using `dbt_valid_from` and `dbt_valid_to` to get point-in-time views
 
 ### Documentation
