@@ -27,12 +27,17 @@ dbt/
 │   │   │   ├── src_hosts.sql
 │   │   │   └── src_reviews.sql
 │   │   ├── dim/
-│   │   │   └── dim_listings_cleansed.sql
+│   │   │   ├── dim_listings_cleansed.sql
+│   │   │   ├── dim_hosts_cleansed.sql
+│   │   │   └── dim_listings_w_hosts.sql
 │   │   ├── fct/
 │   │   │   └── fct_reviews.sql
 │   │   ├── mart/
 │   │   │   └── mart_fullmoon_reviews.sql
 │   │   └── sources.yml
+│   ├── snapshots/
+│   │   ├── raw_listings_snapshot.yml
+│   │   ├── raw_hosts_snapshot.yml
 │   ├── seeds/
 │   │   └── seed_full_moon_dates.csv
 │   ├── dbt_project.yml
@@ -85,6 +90,23 @@ Standardizes listing-level attributes for downstream consumption:
 - Preserves host references and timestamps for slowly changing analysis
 
 This model is materialized as a table (configured in `dbt_project.yml`) to simplify joins for downstream facts and marts.
+
+#### `dim_hosts_cleansed`
+Cleans and standardizes host information:
+- Replaces NULL `host_name` values with 'Anonymous' for data quality
+- Preserves `host_id`, `is_superhost` flag, and timestamps
+- Provides clean host dimension for joining with listings
+
+This model is materialized as a table to support efficient joins in downstream models.
+
+#### `dim_listings_w_hosts`
+Combines listing and host information into a single denormalized dimension:
+- Joins `dim_listings_cleansed` with `dim_hosts_cleansed` on `host_id`
+- Includes listing details (name, room type, price, minimum nights)
+- Includes host details (name, superhost status)
+- Uses `GREATEST(l.updated_at, h.updated_at)` to track the most recent update from either source
+
+This model provides a comprehensive view of listings with their associated host information, ideal for analytics and reporting.
 
 ### Fact Models (`fct/`)
 
@@ -219,6 +241,127 @@ To run tests on your models:
 dbt test
 ```
 
+### Build
+
+The `dbt build` command is a powerful all-in-one command that runs models, tests, seeds, and snapshots in a single operation, following the dependency graph. It's the recommended command for production pipelines and CI/CD workflows.
+
+#### How It Works
+
+The `dbt build` command combines multiple dbt operations into one:
+
+1. **Executes in dependency order**: dbt analyzes the dependency graph and executes resources in the correct order:
+   - Seeds are loaded first (if selected)
+   - Source freshness checks run (if configured)
+   - Models are built following their dependencies (sources → dimensions → facts → marts)
+   - Tests run immediately after their parent models
+   - Snapshots are updated
+
+2. **Stops on failure**: If any resource fails (model, test, or snapshot), dbt stops execution and reports the error. This ensures data quality by preventing downstream models from running with bad data.
+
+3. **Atomic operations**: Each model-test pair is treated as an atomic unit. If a test fails, dbt won't continue building downstream models that depend on the failed model.
+
+4. **Comprehensive execution**: Unlike running `dbt run` followed by `dbt test` separately, `dbt build` ensures tests run immediately after their models, catching issues early.
+
+#### How to Use
+
+To build everything (models, tests, seeds, snapshots):
+```bash
+cd airbnb
+dbt build
+```
+
+To build specific models and their tests:
+```bash
+dbt build --select src_listings
+```
+
+To build a model and all downstream dependencies:
+```bash
+dbt build --select src_listings+
+```
+
+To build models in a directory:
+```bash
+dbt build --select src.*
+```
+
+To build with full refresh on incremental models:
+```bash
+dbt build --full-refresh
+```
+
+To exclude tests from the build:
+```bash
+dbt build --exclude test_type:data
+```
+
+#### Why It's Useful
+
+1. **Single Command Execution**: Instead of running multiple commands (`dbt seed`, `dbt run`, `dbt test`, `dbt snapshot`), you can execute everything with one command, reducing complexity and potential for errors.
+
+2. **Dependency Management**: dbt automatically handles the execution order based on dependencies, ensuring models are built before their dependents and tests run after their models.
+
+3. **Fail-Fast Behavior**: If a test fails, dbt stops execution immediately, preventing downstream models from being built with incorrect data. This saves time and compute resources.
+
+4. **CI/CD Integration**: Perfect for automated pipelines where you want a single command that validates the entire project. If `dbt build` succeeds, you know everything is working correctly.
+
+5. **Data Quality Assurance**: Tests run automatically after models, ensuring data quality issues are caught immediately rather than discovered later in the pipeline.
+
+6. **Production-Ready**: The recommended approach for production environments where you need reliability and comprehensive validation.
+
+7. **Efficiency**: More efficient than running commands separately because dbt can optimize the execution plan and avoid redundant operations.
+
+#### Comparison with Separate Commands
+
+**Traditional approach** (multiple commands):
+```bash
+dbt seed
+dbt run
+dbt test
+dbt snapshot
+```
+- If a test fails, you've already built all models
+- No automatic dependency ordering across commands
+- More verbose and error-prone
+
+**Modern approach** (single command):
+```bash
+dbt build
+```
+- Stops immediately if a test fails
+- Automatic dependency management
+- Single command, less error-prone
+
+#### Example Workflow
+
+For a complete end-to-end build of this project:
+```bash
+cd airbnb
+dbt build
+```
+
+This will:
+1. Load seeds (e.g., `seed_full_moon_dates`)
+2. Build source models (`src_listings`, `src_hosts`, `src_reviews`)
+3. Run tests on source models
+4. Build dimension models (`dim_listings_cleansed`, `dim_hosts_cleansed`, `dim_listings_w_hosts`)
+5. Run tests on dimension models
+6. Build fact models (`fct_reviews`)
+7. Run tests on fact models
+8. Build mart models (`mart_fullmoon_reviews`)
+9. Run tests on mart models
+10. Update snapshots (`scd_raw_listings`, `scd_raw_hosts`)
+
+If any step fails, the process stops and reports the error.
+
+#### Best Practices
+
+- Use `dbt build` in CI/CD pipelines for comprehensive validation
+- Use `dbt build` in production schedules to ensure data quality
+- Use `dbt run` for faster iteration during development when you don't need to run tests
+- Use `dbt build --select` to build specific parts of your DAG
+- Combine with `--full-refresh` when you need to rebuild incremental models from scratch
+
 ### Source Freshness
 
 The `dbt source freshness` command checks the freshness of data in your sources defined in the `sources.yml` file. This command is essential to ensure that the data feeding your models is up-to-date and not stale.
@@ -303,6 +446,118 @@ In this project's `sources.yml` file, the `reviews` table is configured to:
 
 This ensures you are quickly alerted if review data is not being updated regularly.
 
+### Snapshots
+
+The `dbt snapshot` command captures point-in-time snapshots of your data, allowing you to track how data changes over time. This is essential for implementing Slowly Changing Dimensions (SCD) Type 2, auditing data changes, and maintaining historical records.
+
+#### How It Works
+
+Snapshots work by:
+
+1. **Configuration in snapshot files**: You define snapshot configurations (like `raw_listings_snapshot.yml`) that specify:
+   - The source table or model to snapshot
+   - A unique key to identify records
+   - A strategy for detecting changes (timestamp or check)
+   - An `updated_at` field to track when records change
+
+2. **First execution**: When you run `dbt snapshot` for the first time, dbt creates a snapshot table with all current records from the source, plus metadata columns:
+   - `dbt_scd_id`: Unique identifier for each snapshot record
+   - `dbt_updated_at`: Timestamp when the snapshot was taken
+   - `dbt_valid_from`: When this version of the record became valid
+   - `dbt_valid_to`: When this version was superseded (NULL for current records)
+
+3. **Subsequent executions**: On each run, dbt:
+   - Compares current source data with the last snapshot
+   - Identifies new records, changed records, and deleted records
+   - Inserts new versions of changed records
+   - Marks old versions as invalid (sets `dbt_valid_to`)
+   - Handles deletions based on the `hard_delete` configuration
+
+#### Snapshot Strategy: Timestamp
+
+This project uses the **timestamp strategy** for all snapshots. The snapshots are configured as follows:
+
+**`scd_raw_listings`** (in `airbnb/snapshots/raw_listings_snapshot.yml`):
+```yaml
+snapshots:
+  - name: scd_raw_listings
+    relation: source('airbnb', 'listings')
+    config:
+      unique_key: id
+      updated_at: updated_at
+      strategy: timestamp
+      hard_delete: invalidate
+```
+
+**`scd_raw_hosts`** (in `airbnb/snapshots/raw_hosts_snapshot.yml`):
+```yaml
+snapshots:
+  - name: scd_raw_hosts
+    relation: source('airbnb', 'hosts')
+    config:
+      unique_key: id
+      updated_at: updated_at
+      strategy: timestamp
+      hard_delete: invalidate
+```
+
+Both configurations:
+- Use `id` as the unique identifier for each record
+- Detect changes by comparing the `updated_at` timestamp
+- When a record is deleted from the source, mark it as invalidated (set `dbt_valid_to`) rather than deleting it from the snapshot
+
+#### How to Use
+
+To run all snapshots:
+```bash
+cd airbnb
+dbt snapshot
+```
+
+To run a specific snapshot:
+```bash
+dbt snapshot --select scd_raw_listings
+# or
+dbt snapshot --select scd_raw_hosts
+```
+
+#### Why It's Useful
+
+1. **Historical Data Tracking**: Snapshots preserve the state of your data at different points in time, allowing you to answer questions like "What was the price of this listing last month?" or "When did this host become a superhost?"
+
+2. **Slowly Changing Dimensions (SCD) Type 2**: Snapshots implement SCD Type 2 automatically, creating a complete audit trail of all changes. This is essential for:
+   - Compliance and auditing requirements
+   - Trend analysis over time
+   - Understanding data evolution
+
+3. **Data Quality Monitoring**: By comparing snapshots, you can detect unexpected changes, data quality issues, or anomalies in your source data.
+
+4. **Point-in-Time Analysis**: You can reconstruct the state of your data at any point in time by querying snapshot tables with appropriate `dbt_valid_from` and `dbt_valid_to` filters.
+
+5. **Change Detection**: Snapshots automatically detect and record all changes without requiring manual intervention or complex change detection logic.
+
+6. **Audit Trail**: Provides a complete audit trail of data changes, which is valuable for debugging, compliance, and understanding data lineage.
+
+#### Example Use Cases
+
+**Listings Snapshot**: The `scd_raw_listings` snapshot tracks changes to listing data. If a listing's price changes from $100 to $150, the snapshot will:
+- Keep the old record with `dbt_valid_to` set to the change timestamp
+- Create a new record with the updated price and `dbt_valid_from` set to the change timestamp
+- Both records remain in the snapshot table, allowing you to see the full history
+
+**Hosts Snapshot**: The `scd_raw_hosts` snapshot tracks changes to host data. If a host becomes a superhost, the snapshot will:
+- Preserve the previous record showing the host was not a superhost
+- Create a new record showing the superhost status with the appropriate timestamps
+- Enable historical analysis of when hosts achieved superhost status
+
+#### Best Practices
+
+- Run snapshots regularly (e.g., daily) to capture changes frequently
+- Use snapshots for critical source tables that change over time
+- Consider the storage implications of maintaining historical snapshots
+- Use `hard_delete: invalidate` to preserve deleted records for audit purposes
+- Query snapshot tables using `dbt_valid_from` and `dbt_valid_to` to get point-in-time views
+
 ### Documentation
 
 To generate and view project documentation:
@@ -316,8 +571,12 @@ dbt docs serve
 The data pipeline flow:
 
 1. **Raw Data**: Data from Inside Airbnb is loaded into Snowflake in the `AIRBNB.RAW` schema
-2. **Source Models**: dbt models in the `src/` directory transform raw data into clean, standardized formats
-3. **Analytics**: Clean models can be used for further analysis, reporting, and visualization
+2. **Snapshots**: dbt snapshots capture point-in-time states of raw data (`scd_raw_listings`, `scd_raw_hosts`) for historical tracking and SCD Type 2
+3. **Source Models**: dbt models in the `src/` directory transform raw data into clean, standardized formats
+4. **Dimension Models**: Clean dimension models (`dim_listings_cleansed`, `dim_hosts_cleansed`, `dim_listings_w_hosts`) provide standardized attributes for analytics
+5. **Fact Models**: Fact models (`fct_reviews`) aggregate and structure transactional data
+6. **Mart Models**: Mart models (`mart_fullmoon_reviews`) combine facts and dimensions for business intelligence
+7. **Analytics**: Clean models can be used for further analysis, reporting, and visualization
 
 ## Snowflake Integration
 
