@@ -11,8 +11,18 @@
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
 	"forwardPorts": [5000],
 
+	// Mount SSH config and keys from host to container
+	// Mount git config from host to container
+	"mounts": [
+		"source=${localEnv:HOME}/.ssh,target=/home/vscode/.ssh,type=bind,consistency=cached",
+		"source=${localEnv:HOME}/.gitconfig,target=/home/vscode/.gitconfig,type=bind,consistency=cached"
+	],
+
+	// Ensure SSH directory exists on host before mounting
+	"initializeCommand": "mkdir -p ${localEnv:HOME}/.ssh",
+
 	// Use 'postCreateCommand' to run commands after the container is created.
-	"postCreateCommand": "bash scripts/setup_codespace_env.sh",
+	"postCreateCommand": "bash scripts/setup_ssh.sh && bash scripts/setup_codespace_env.sh",
 	"customizations": {
 		"vscode": {
 			"extensions": [
