@@ -3,36 +3,55 @@ set -e
 
 echo "Setting up SSH configuration..."
 
-# Create .ssh directory if it doesn't exist (only if not mounted)
-if [ ! -d ~/.ssh ]; then
-    mkdir -p ~/.ssh
-    chmod 700 ~/.ssh
+# Create .ssh directory in container (not mounted)
+mkdir -p ~/.ssh
+chmod 700 ~/.ssh
+
+# Copy SSH files from mounted host directory to container directory
+# This allows us to set correct permissions in the container
+if [ -d ~/.ssh-host ] && [ "$(ls -A ~/.ssh-host 2>/dev/null)" ]; then
+    echo "Copying SSH files from host mount to container directory..."
+    
+    # Copy all files from mounted directory
+    cp -r ~/.ssh-host/* ~/.ssh/ 2>/dev/null || true
+    
+    # Set correct permissions for all SSH files (now we can do this since they're copied)
+    find ~/.ssh -type f -exec chmod 600 {} \;
+    find ~/.ssh -type d -exec chmod 700 {} \;
+    
+    # Ensure known_hosts has correct permissions (644)
+    if [ -f ~/.ssh/known_hosts ]; then
+        chmod 644 ~/.ssh/known_hosts
+    fi
+    
+    # Ensure config file has correct permissions (600)
+    if [ -f ~/.ssh/config ]; then
+        chmod 600 ~/.ssh/config
+    fi
+    
+    echo "SSH files copied and permissions set correctly"
+else
+    echo "Warning: No SSH files found in mounted directory (~/.ssh-host)"
+    echo "If you need SSH access, ensure your host ~/.ssh directory contains your keys"
 fi
 
-# Try to set correct permissions for .ssh directory (may fail if mounted read-only, that's ok)
-chmod 700 ~/.ssh 2>/dev/null || echo "Note: SSH directory permissions may be read-only (mounted from host)"
+# List contents for debugging
+echo "SSH directory contents:"
+ls -la ~/.ssh || echo "Could not list SSH directory"
 
-# Set correct permissions for SSH files (may fail if mounted read-only, that's ok)
-if [ -d ~/.ssh ]; then
-    # Fix permissions for all files in .ssh
-    find ~/.ssh -type f -exec chmod 600 {} \; 2>/dev/null || true
-    find ~/.ssh -type d -exec chmod 700 {} \; 2>/dev/null || true
-    
-    # Ensure config file has correct permissions if it exists
-    if [ -f ~/.ssh/config ]; then
-        chmod 600 ~/.ssh/config 2>/dev/null || true
-    fi
-    
-    # Ensure known_hosts has correct permissions if it exists
-    if [ -f ~/.ssh/known_hosts ]; then
-        chmod 644 ~/.ssh/known_hosts 2>/dev/null || true
-    fi
-    
-    # List contents for debugging
-    echo "SSH directory contents:"
-    ls -la ~/.ssh || echo "Could not list SSH directory"
-else
-    echo "Warning: SSH directory does not exist"
+# Verify permissions
+echo "Verifying SSH key permissions..."
+if [ -f ~/.ssh/id_rsa ] || [ -f ~/.ssh/id_ed25519 ] || [ -f ~/.ssh/id_ecdsa ]; then
+    for key in ~/.ssh/id_*; do
+        if [ -f "$key" ] && [ ! -L "$key" ]; then
+            perms=$(stat -c "%a" "$key" 2>/dev/null || stat -f "%OLp" "$key" 2>/dev/null || echo "unknown")
+            echo "  $key: permissions $perms (should be 600)"
+            if [ "$perms" != "600" ]; then
+                echo "    WARNING: Incorrect permissions! Attempting to fix..."
+                chmod 600 "$key"
+            fi
+        fi
+    done
 fi
 
 # Configure git to use SSH for GitHub if not already configured
@@ -52,7 +71,19 @@ git config --list | grep -E "(user\.|url\.)" | head -5 || echo "Git config not f
 
 # Test SSH connection to GitHub (non-blocking)
 echo "Testing SSH connection to GitHub..."
-ssh -T git@github.com 2>&1 | head -1 || echo "SSH test completed (exit code is normal for test)"
+if ssh -T git@github.com 2>&1 | grep -q "successfully authenticated"; then
+    echo "✓ SSH connection to GitHub successful!"
+elif ssh -T git@github.com 2>&1 | grep -q "Permission denied"; then
+    echo "✗ SSH connection failed: Permission denied"
+    echo "  This usually means:"
+    echo "  1. Your SSH key is not added to your GitHub account"
+    echo "  2. The SSH key permissions are incorrect"
+    echo "  3. The SSH key passphrase is required"
+    echo ""
+    echo "  To debug, run: ssh -vT git@github.com"
+else
+    echo "SSH test completed (exit code is normal for test)"
+fi
 
 echo "SSH setup complete!"
 
