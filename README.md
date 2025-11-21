@@ -327,10 +327,516 @@ dbt run --select fct.* --full-refresh
 
 ### Testing
 
-To run tests on your models:
+The `dbt test` command executes data quality tests defined in your project. Tests validate that your models meet expected data quality standards, ensuring reliability and correctness of your transformed data.
+
+#### How It Works
+
+The `dbt test` command works as follows:
+
+1. **Test Discovery**: dbt automatically discovers all tests defined in your project, including:
+   - **Generic tests**: Built-in tests like `unique`, `not_null`, `relationships`, `accepted_values`, `dbt_utils` tests
+   - **Singular tests**: Custom SQL tests defined in `.sql` files in the `tests/` directory
+   - **Schema tests**: Tests defined in `schema.yml` files (like in `airbnb/models/schema.yml`)
+
+2. **Test Execution**: dbt compiles each test into SQL queries that check your data:
+   - Tests return rows when they fail (e.g., `unique` test returns duplicate values)
+   - Tests return no rows when they pass
+   - Each test runs as a separate query against your data warehouse
+
+3. **Results Reporting**: dbt reports the results of all tests:
+   - Shows which tests passed and which failed
+   - Displays the number of failing rows for each test
+   - Provides error messages and details about failures
+
+#### How to Use
+
+To run all tests in your project:
 ```bash
+cd airbnb
 dbt test
 ```
+
+To run tests on a specific model:
+```bash
+dbt test --select dim_listings_cleansed
+```
+
+To run tests on models in a directory:
+```bash
+dbt test --select dim.*
+```
+
+To run only generic tests (exclude singular tests):
+```bash
+dbt test --select test_type:generic
+```
+
+To run only singular tests:
+```bash
+dbt test --select test_type:singular
+```
+
+#### Why It's Useful
+
+1. **Data Quality Assurance**: Tests validate that your data transformations produce correct and reliable results, catching errors before they affect downstream analyses or reports.
+
+2. **Early Error Detection**: Running tests regularly helps identify data quality issues early in the pipeline, preventing bad data from propagating to downstream models.
+
+3. **Documentation**: Tests serve as executable documentation, clearly defining the expected data quality standards for each model and column.
+
+4. **CI/CD Integration**: Tests can be integrated into CI/CD pipelines to automatically validate data quality before deploying changes to production.
+
+5. **Regression Prevention**: Tests help prevent regressions by catching issues when model logic changes or when source data quality degrades.
+
+6. **Confidence in Data**: Passing tests give you confidence that your data is reliable and ready for use in analytics, reporting, and business decisions.
+
+#### Example Tests in This Project
+
+In `airbnb/models/schema.yml`, you'll find tests like:
+- **`unique`**: Ensures `listing_id` is unique in `dim_listings_cleansed`
+- **`not_null`**: Ensures `listing_id` and `host_id` are never null
+- **`relationships`**: Validates that `host_id` in `dim_listings_cleansed` exists in `dim_hosts_cleansed`
+- **`accepted_values`**: Ensures `room_type` only contains valid values
+
+#### Stop on First Failure: `dbt test -x`
+
+The `-x` (or `--fail-fast`) flag makes dbt stop execution immediately when the first test fails, rather than continuing to run all remaining tests.
+
+**Normal execution** (`dbt test`):
+- Runs all tests in the project
+- Continues even if some tests fail
+- Reports all failures at the end
+- Useful when you want to see the complete picture of all test failures
+
+**Fail-fast execution** (`dbt test -x`):
+- Stops immediately when the first test fails
+- Does not run remaining tests
+- Returns immediately with the first failure
+- Useful for faster feedback during development
+
+**When to use `dbt test -x`:**
+
+1. **Development Workflow**: When iterating on models and you want immediate feedback on the first issue, rather than waiting for all tests to complete.
+
+2. **CI/CD Pipelines**: In automated pipelines where you want to fail fast and save compute resources by not running unnecessary tests after a failure.
+
+3. **Quick Validation**: When you want to quickly check if your changes broke something, without waiting for the full test suite.
+
+4. **Debugging**: When fixing a specific issue and you want to focus on the first problem before addressing others.
+
+**Examples:**
+```bash
+# Stop on first failure
+dbt test -x
+
+# Stop on first failure for a specific model
+dbt test --select dim_listings_cleansed -x
+
+# Stop on first failure for models in a directory
+dbt test --select dim.* -x
+```
+
+**Comparison:**
+
+**Normal execution** (`dbt test`):
+```bash
+$ dbt test
+Running 10 tests...
+✗ FAIL 1: unique test on dim_listings_cleansed.listing_id (2 failures)
+✗ FAIL 2: not_null test on dim_listings_cleansed.host_id (5 failures)
+✓ PASS 3: relationships test on dim_listings_cleansed.host_id
+...
+# Continues running all tests
+```
+
+**Fail-fast execution** (`dbt test -x`):
+```bash
+$ dbt test -x
+Running 10 tests...
+✗ FAIL 1: unique test on dim_listings_cleansed.listing_id (2 failures)
+# Stops immediately, doesn't run remaining 9 tests
+```
+
+#### Debugging Tests
+
+When a test fails, you need to understand why. dbt provides powerful debugging capabilities through compiled SQL files that show exactly what query is being executed.
+
+##### How Test Debugging Works
+
+When dbt runs tests, it compiles each test into a SQL query and stores it in the `target/compiled/` directory. These compiled SQL files are invaluable for debugging because they show:
+
+1. **The exact SQL query** that the test executes
+2. **The resolved references** (e.g., `ref('dim_listings_cleansed')` becomes the actual table name)
+3. **The compiled Jinja logic** (if any macros or Jinja are used)
+4. **The test logic** in its final, executable form
+
+##### Where to Find Compiled Test Files
+
+After running `dbt test` or `dbt compile`, compiled test files are located in:
+
+```
+airbnb/target/compiled/airbnb/models/schema.yml/
+```
+
+The file naming convention follows this pattern:
+- Generic tests: `{test_name}_{model_name}_{column_name}_{hash}.sql`
+- Example: `accepted_values_dim_listings_c_2a86f637e70df013556a8a127cb46aa1.sql`
+
+**Note**: The `target/` directory is automatically created by dbt and is listed in `.gitignore` (it should not be committed to version control).
+
+##### Step-by-Step Debugging Process
+
+**1. Run the test to see the failure:**
+```bash
+cd airbnb
+dbt test --select dim_listings_cleansed
+```
+
+**2. Compile tests to generate SQL files (without executing):**
+```bash
+dbt compile --select dim_listings_cleansed
+```
+
+This generates the compiled SQL files in `target/compiled/` without actually running the tests, which is useful for:
+- Inspecting the SQL before execution
+- Understanding complex test logic
+- Preparing for debugging
+
+**3. Locate the compiled test file:**
+```bash
+# List compiled test files
+ls -la airbnb/target/compiled/airbnb/models/schema.yml/
+```
+
+**4. Examine the compiled SQL:**
+Open the compiled SQL file to see exactly what query the test executes. For example, an `accepted_values` test might look like:
+
+```sql
+with all_values as (
+    select
+        room_type as value_field,
+        count(*) as n_records
+    from AIRBNB.DEV.dim_listings_cleansed
+    group by room_type
+)
+
+select *
+from all_values
+where value_field not in (
+    'Entire home/apt','Private room','Shared room','Hotel room'
+)
+```
+
+**5. Execute the SQL manually in your data warehouse:**
+Copy the SQL from the compiled file and run it directly in Snowflake (or your data warehouse). This allows you to:
+- See the exact rows that are causing the test to fail
+- Understand the data that violates the test condition
+- Investigate why the data doesn't meet expectations
+
+**6. Fix the issue:**
+Based on what you find:
+- **If the data is wrong**: Fix the source data or the model logic that produces it
+- **If the test is wrong**: Adjust the test configuration in `schema.yml`
+- **If the test logic needs refinement**: Modify the test or create a custom test
+
+##### Example: Debugging a Failed `accepted_values` Test
+
+**Scenario**: The `accepted_values` test on `room_type` fails.
+
+**1. Run the test:**
+```bash
+$ dbt test --select dim_listings_cleansed
+✗ FAIL accepted_values_dim_listings_cleansed_room_type__room_type__accepted_values
+  Got 1 result, configured to fail if != 0
+```
+
+**2. Compile to see the SQL:**
+```bash
+$ dbt compile --select dim_listings_cleansed
+```
+
+**3. Find and examine the compiled file:**
+```bash
+$ cat airbnb/target/compiled/airbnb/models/schema.yml/accepted_values_dim_listings_c_*.sql
+```
+
+**4. Run the SQL manually in Snowflake:**
+```sql
+-- Copy the SQL from the compiled file and run it
+with all_values as (
+    select
+        room_type as value_field,
+        count(*) as n_records
+    from AIRBNB.DEV.dim_listings_cleansed
+    group by room_type
+)
+
+select *
+from all_values
+where value_field not in (
+    'Entire home/apt','Private room','Shared room','Hotel room'
+)
+```
+
+**5. Analyze the results:**
+The query returns rows showing which values are invalid:
+```
+value_field        | n_records
+-------------------|----------
+Hotel room, break  | 5
+```
+
+**6. Fix the issue:**
+You discover that some records have `'Hotel room, break'` instead of `'Hotel room'`. You can either:
+- Fix the data in the model: Update `dim_listings_cleansed.sql` to normalize this value
+- Update the test: Add `'Hotel room, break'` to the accepted values list (if it's a valid value)
+
+##### Why Compiled Files Are Useful
+
+1. **Transparency**: See exactly what SQL is being executed, not just the test configuration
+2. **Investigation**: Run the SQL manually to explore the data and understand failures
+3. **Learning**: Understand how generic tests work by seeing their compiled SQL
+4. **Customization**: Use the compiled SQL as a starting point for custom tests
+5. **Performance**: Analyze query performance and optimize if needed
+6. **Debugging Complex Logic**: When tests use macros or complex Jinja, the compiled file shows the final result
+
+##### Tips for Effective Test Debugging
+
+1. **Use `dbt compile` first**: Generate compiled files without executing tests to inspect the SQL
+2. **Check the file structure**: Compiled files mirror your project structure, making them easy to locate
+3. **Run SQL manually**: Execute the compiled SQL in your data warehouse to see actual failing rows
+4. **Understand test logic**: Generic tests follow predictable patterns - learn them to debug faster
+5. **Check dependencies**: If a test fails, ensure the underlying model is correct first
+6. **Use `--select`**: Compile only specific tests to focus your debugging efforts
+7. **Review test configuration**: Sometimes the test configuration in `schema.yml` needs adjustment, not the data
+
+##### Common Test Patterns in Compiled SQL
+
+- **`unique` test**: `SELECT column FROM model GROUP BY column HAVING COUNT(*) > 1`
+- **`not_null` test**: `SELECT * FROM model WHERE column IS NULL`
+- **`relationships` test**: `SELECT * FROM model WHERE foreign_key NOT IN (SELECT primary_key FROM referenced_model)`
+- **`accepted_values` test**: `SELECT * FROM model WHERE column NOT IN (list_of_values)`
+
+Understanding these patterns helps you quickly identify what a test is checking and why it might be failing.
+
+#### Storing Test Failures in the Data Warehouse: `store_failures: true`
+
+This project is configured to store test failures directly in the data warehouse, making debugging much easier and more efficient. This feature is enabled in `airbnb/dbt_project.yml`:
+
+```yaml
+data_tests:
+  +store_failures: true
+```
+
+##### How It Works
+
+When `store_failures: true` is enabled, dbt automatically creates tables in your data warehouse containing the actual rows that caused each test to fail. Instead of just seeing that a test failed, you can query these tables to see exactly which records violated the test condition.
+
+**Normal behavior** (without `store_failures`):
+- Tests run and report pass/fail status
+- You only see the count of failing rows
+- To see the actual failing data, you must manually run the compiled SQL
+
+**With `store_failures: true`**:
+- Tests run and report pass/fail status
+- **Automatically creates tables** with the failing rows
+- You can query these tables directly in your data warehouse
+- Tables persist until the next test run (or until manually dropped)
+
+##### Where Test Failures Are Stored
+
+Test failure tables are created in the same schema as your models (configured in `profiles.yml`). For this project, that's typically `AIRBNB.DEV` (or your configured target schema).
+
+**Table naming convention:**
+```
+dbt_test_failure_{test_name}
+```
+
+For example:
+- `dbt_test_failure_accepted_values_dim_listings_cleansed_room_type__room_type__accepted_values`
+- `dbt_test_failure_unique_dim_listings_cleansed_listing_id`
+- `dbt_test_failure_not_null_dim_listings_cleansed_host_id`
+
+##### How to Query Test Failures
+
+After running `dbt test`, you can query the failure tables directly in Snowflake:
+
+**1. List all test failure tables:**
+```sql
+-- In Snowflake, list all tables with the dbt_test_failure prefix
+SHOW TABLES LIKE 'dbt_test_failure_%' IN SCHEMA AIRBNB.DEV;
+```
+
+**2. Query a specific test failure:**
+```sql
+-- Query failures from an accepted_values test
+SELECT *
+FROM AIRBNB.DEV.dbt_test_failure_accepted_values_dim_listings_cleansed_room_type__room_type__accepted_values;
+
+-- Query failures from a unique test
+SELECT *
+FROM AIRBNB.DEV.dbt_test_failure_unique_dim_listings_cleansed_listing_id;
+
+-- Query failures from a not_null test
+SELECT *
+FROM AIRBNB.DEV.dbt_test_failure_not_null_dim_listings_cleansed_host_id;
+```
+
+**3. Count failures:**
+```sql
+-- Count how many rows failed a specific test
+SELECT COUNT(*) as failure_count
+FROM AIRBNB.DEV.dbt_test_failure_accepted_values_dim_listings_cleansed_room_type__room_type__accepted_values;
+```
+
+**4. Analyze failure patterns:**
+```sql
+-- For accepted_values test, see which invalid values appear and how often
+SELECT 
+    value_field,
+    COUNT(*) as occurrence_count
+FROM AIRBNB.DEV.dbt_test_failure_accepted_values_dim_listings_cleansed_room_type__room_type__accepted_values
+GROUP BY value_field
+ORDER BY occurrence_count DESC;
+
+-- For unique test, see duplicate values
+SELECT 
+    listing_id,
+    COUNT(*) as duplicate_count
+FROM AIRBNB.DEV.dbt_test_failure_unique_dim_listings_cleansed_listing_id
+GROUP BY listing_id
+ORDER BY duplicate_count DESC;
+```
+
+##### Example: Debugging with Stored Failures
+
+**Scenario**: The `accepted_values` test on `room_type` fails.
+
+**1. Run the test:**
+```bash
+$ dbt test --select dim_listings_cleansed
+✗ FAIL accepted_values_dim_listings_cleansed_room_type__room_type__accepted_values
+  Got 1 result, configured to fail if != 0
+```
+
+**2. Query the failure table in Snowflake:**
+```sql
+SELECT *
+FROM AIRBNB.DEV.dbt_test_failure_accepted_values_dim_listings_cleansed_room_type__room_type__accepted_values;
+```
+
+**Result:**
+```
+value_field        | n_records
+-------------------|----------
+Hotel room, break  | 5
+```
+
+**3. Get more details about the failing records:**
+```sql
+-- Query the actual model to see which listings have the invalid room_type
+SELECT 
+    listing_id,
+    listing_name,
+    room_type,
+    host_id
+FROM AIRBNB.DEV.dim_listings_cleansed
+WHERE room_type = 'Hotel room, break';
+```
+
+**4. Fix the issue:**
+Now you can see exactly which records are problematic and fix them in your model logic or update the test configuration.
+
+##### Why `store_failures` Is Useful
+
+1. **Direct Database Access**: Query failing rows directly in your data warehouse without needing to run SQL manually or check compiled files
+
+2. **Persistent Debugging**: Failure tables persist between test runs, allowing you to investigate issues even after the test command completes
+
+3. **Efficient Investigation**: No need to re-run tests or compile SQL - the failing data is already available in tables
+
+4. **Data Analysis**: Perform complex queries on failure tables to understand patterns, trends, and root causes
+
+5. **Team Collaboration**: Other team members can query the same failure tables to understand issues without running tests themselves
+
+6. **Automated Monitoring**: Can be integrated into monitoring dashboards or alerts that query failure tables
+
+7. **Historical Tracking**: Failure tables can be preserved to track data quality trends over time (if not dropped between runs)
+
+##### Table Lifecycle
+
+- **Creation**: Tables are created automatically when a test fails (if they don't already exist)
+- **Updates**: On subsequent test runs, tables are refreshed with current failure data
+- **Cleanup**: Tables are not automatically dropped - you may want to clean them up periodically:
+  ```sql
+  -- Drop a specific failure table
+  DROP TABLE IF EXISTS AIRBNB.DEV.dbt_test_failure_accepted_values_dim_listings_cleansed_room_type__room_type__accepted_values;
+  
+  -- Or drop all failure tables (be careful!)
+  -- You can use dbt's clean command or manually drop them
+  ```
+
+##### Configuration Options
+
+You can also configure `store_failures` at different levels:
+
+**Project level** (current configuration in `dbt_project.yml`):
+```yaml
+data_tests:
+  +store_failures: true  # Applies to all tests
+```
+
+**Model level** (in `schema.yml`):
+```yaml
+models:
+  - name: dim_listings_cleansed
+    columns:
+      - name: room_type
+        tests:
+          - accepted_values:
+              arguments:
+                values: [...]
+              config:
+                store_failures: true  # Only for this specific test
+```
+
+**Test level** (using `config()` in a singular test):
+```sql
+-- In tests/my_custom_test.sql
+{{ config(store_failures=true) }}
+
+SELECT * FROM ...
+```
+
+##### Best Practices
+
+1. **Enable for Development**: Always use `store_failures: true` during development to speed up debugging
+
+2. **Monitor Storage**: Be aware that failure tables consume storage space - clean them up periodically if needed
+
+3. **Use in CI/CD**: Consider enabling in CI/CD pipelines to capture failure data for analysis
+
+4. **Query Patterns**: Create reusable SQL queries or views for common failure analysis patterns
+
+5. **Documentation**: Document the failure table naming convention for your team
+
+6. **Cleanup Strategy**: Establish a cleanup strategy (manual or automated) for old failure tables
+
+##### Comparison: Compiled Files vs. Stored Failures
+
+| Feature | Compiled Files | Stored Failures |
+|---------|---------------|-----------------|
+| **Location** | Local `target/compiled/` | Data warehouse tables |
+| **Content** | SQL query | Actual failing rows |
+| **Access** | File system | SQL queries |
+| **Persistence** | Until next compile | Until manually dropped |
+| **Use Case** | Understanding test logic | Seeing actual failing data |
+| **Best For** | Learning, customization | Quick debugging, analysis |
+
+**Use both approaches together** for comprehensive debugging:
+1. Use compiled files to understand what the test is checking
+2. Use stored failures to see exactly which rows are failing
+3. Query the failure tables to analyze patterns and root causes
 
 ### Build
 
