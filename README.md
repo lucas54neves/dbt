@@ -398,6 +398,96 @@ In `airbnb/models/schema.yml`, you'll find tests like:
 - **`relationships`**: Validates that `host_id` in `dim_listings_cleansed` exists in `dim_hosts_cleansed`
 - **`accepted_values`**: Ensures `room_type` only contains valid values
 
+#### Test Severity: `severity: warn` vs `severity: error`
+
+dbt allows you to configure the severity level for tests, which determines how test failures are handled. This is configured using the `severity` option in the test's `config` block.
+
+**Default behavior** (no `severity` specified):
+- Tests default to `severity: error`
+- When a test fails, dbt treats it as an error
+- The test run fails and stops execution (if using `dbt build` or `dbt test -x`)
+- Pipeline execution is blocked until the test passes
+
+**`severity: warn`**:
+- When a test fails, dbt treats it as a warning instead of an error
+- The test run continues even if the test fails
+- Warnings are reported in the output but don't block pipeline execution
+- Useful for monitoring data quality without blocking downstream processes
+- Ideal for tests that check data volume, trends, or non-critical quality metrics
+
+**`severity: error`** (explicit):
+- Explicitly sets the test to fail on errors
+- Same behavior as the default
+- Use this when you want to be explicit about critical tests
+
+**Example in this project:**
+
+In `airbnb/models/schema.yml`, the `minimum_row_count` test on `dim_listings_cleansed` is configured with `severity: warn`:
+
+```yaml
+- name: dim_listings_cleansed
+  data_tests:
+    - minimum_row_count:
+        arguments:
+          min_row_count: 10000000
+        config:
+          severity: warn
+```
+
+This configuration means:
+- If the table has fewer than 10,000,000 rows, dbt will emit a warning
+- The pipeline will continue running even if the row count is below the threshold
+- This allows monitoring data volume without blocking downstream processes
+- Useful for detecting data loading issues or data volume anomalies without stopping the entire pipeline
+
+**When to use `severity: warn`:**
+
+1. **Data Volume Monitoring**: Tests that check if data volume meets expectations but shouldn't block the pipeline
+2. **Non-Critical Quality Checks**: Tests for data quality issues that are important to know about but don't require immediate action
+3. **Trend Monitoring**: Tests that track data trends over time where occasional failures are expected
+4. **Informational Tests**: Tests that provide insights but aren't critical for data correctness
+
+**When to use `severity: error` (default):**
+
+1. **Data Integrity**: Tests that ensure data correctness (e.g., `unique`, `not_null`, `relationships`)
+2. **Critical Business Rules**: Tests that validate critical business logic
+3. **Referential Integrity**: Tests that ensure foreign key relationships are valid
+4. **Data Type Validation**: Tests that ensure data types and formats are correct
+
+**How to configure:**
+
+```yaml
+# Warning severity
+- name: my_model
+  columns:
+    - name: my_column
+      tests:
+        - my_test:
+            config:
+              severity: warn
+
+# Error severity (explicit)
+- name: my_model
+  columns:
+    - name: my_column
+      tests:
+        - my_test:
+            config:
+              severity: error
+```
+
+**Viewing test results:**
+
+When you run `dbt test`, warnings and errors are clearly distinguished in the output:
+
+```
+✓ PASS 1: unique test on dim_listings_cleansed.listing_id
+⚠ WARN 2: minimum_row_count test on dim_listings_cleansed (below threshold)
+✗ FAIL 3: not_null test on dim_listings_cleansed.host_id
+```
+
+Warnings are marked with `⚠ WARN` and errors with `✗ FAIL`.
+
 #### Stop on First Failure: `dbt test -x`
 
 The `-x` (or `--fail-fast`) flag makes dbt stop execution immediately when the first test fails, rather than continuing to run all remaining tests.

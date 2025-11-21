@@ -1,13 +1,22 @@
 models:
   - name: dim_listings_cleansed
+    data_tests:
+      - minimum_row_count:
+          arguments:
+            min_row_count: 1000
+          config:
+            # severity: warn - When this test fails, it will emit a warning instead of an error.
+            # This allows the pipeline to continue running even if the row count is below the threshold.
+            # Useful for monitoring data volume without blocking downstream processes.
+            severity: warn
     columns:
       - name: listing_id
-        tests:
+        data_tests:
           - unique
           - not_null
       
       - name: host_id
-        tests:
+        data_tests:
           - not_null
           - relationships:
               arguments:
@@ -15,7 +24,27 @@ models:
                 field: host_id
       
       - name: room_type
-        tests:
+        data_tests:
           - accepted_values:
               arguments:
                 values: ['Entire home/apt', 'Private room', 'Shared room', 'Hotel room']
+
+      - name: minimum_nights
+        data_tests:
+          - positive_values
+
+  - name: dim_hosts_cleansed
+    config:
+      contract:
+        enforced: true
+    columns:
+      - name: host_id
+        data_type: integer
+      - name: host_name
+        data_type: string
+      - name: is_superhost
+        data_type: string
+      - name: created_at
+        data_type: timestamp
+      - name: updated_at
+        data_type: timestamp
